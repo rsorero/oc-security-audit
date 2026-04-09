@@ -1,6 +1,6 @@
 # OC Security Audit -- OWASP-grounded pre-launch security audit for web apps
 
-*Dedicated to [Ohad Cohen](https://www.timesofisrael.com/sgt-first-class-ohad-cohen-20-elite-fighter-who-loved-and-was-loved/), a brave Israeli soldier who gave his life protecting Kibbutz Be'eri on October 7, 2023.*
+*Dedicated to [Ohad Cohen](https://cohenron09.wixsite.com/boodi), a brave Israeli soldier who gave his life protecting Kibbutz Be'eri on October 7, 2023.*
 
 ## Install
 
