@@ -128,7 +128,7 @@ Each stack has its own profile (`profiles/{stack}.md`) with WSTG-mapped checks, 
 
 ### Unsupported stacks
 
-> **Note (April 2026):** We currently only support the `nextjs-prisma` profile. Adding a new profile is straightforward — copy the existing profile, adjust the RUN/SKIP/DEFER decisions for your stack, and add matching grep patterns. PRs welcome, or [open an issue](https://github.com/anthropics/claude-code/issues) to request a profile for your stack.
+> **Note (April 2026):** We currently only support the `nextjs-prisma` profile. Adding a new profile is straightforward — copy the existing profile, adjust the RUN/SKIP/DEFER decisions for your stack, and add matching grep patterns. PRs welcome, or [open an issue](https://github.com/miclivne/oc-security-audit/issues) to request a profile for your stack.
 
 If your stack is not yet supported, partial stack-independent checks still run (security headers, TLS, exposed files, DNS, npm audit, secret patterns) with a message noting which stack-specific checks were skipped.
 
