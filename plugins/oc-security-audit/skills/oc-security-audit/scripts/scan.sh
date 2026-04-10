@@ -1,5 +1,5 @@
-#!/usr/bin/env bash
-set -uo pipefail  # Note: NOT set -e — npm audit and curl exit non-zero on findings
+#!/bin/sh
+set -u  # Note: NOT set -e — npm audit and curl exit non-zero on findings
 export LC_ALL=en_US.UTF-8  # WHY: Consistent emoji output across macOS/Linux locales
 # WHY: Derive SKILL_DIR safely — $0 may contain literal ~ which bash does not expand
 # in double-quoted subshells. realpath/readlink resolve to absolute path first.
@@ -47,7 +47,37 @@ PASS_COUNT=0; WARN_COUNT=0; FAIL_COUNT=0
 
 # WHY: Per-category counters for the Audit Details summary table.
 # Category names match the report template's 14 user-facing categories.
-declare -A CAT_PASS CAT_WARN CAT_FAIL CAT_IDS
+# Uses a temp file as a key-value store (POSIX sh has no associative arrays).
+_cat_file=$(mktemp)
+trap 'rm -f "$_cat_file"' EXIT
+
+# WHY: Sanitize category name to a valid shell-safe key (e.g. "Code injection" → "code_injection")
+_cat_key() { echo "$1" | tr ' /' '__' | tr -cd 'a-zA-Z0-9_'; }
+
+# Get/set/increment helpers for the category key-value store
+cat_get() {
+  _key=$(_cat_key "$2")
+  _val=$(grep "^${1}_${_key}=" "$_cat_file" 2>/dev/null | tail -1 | cut -d= -f2)
+  echo "${_val:-0}"
+}
+cat_set() {
+  _key=$(_cat_key "$2")
+  echo "${1}_${_key}=$3" >> "$_cat_file"
+}
+cat_inc() {
+  _old=$(cat_get "$1" "$2")
+  cat_set "$1" "$2" "$(( _old + 1 ))"
+}
+# Get/append for the IDS tracker (comma-separated WSTG IDs)
+cat_get_ids() {
+  _key=$(_cat_key "$1")
+  _val=$(grep "^IDS_${_key}=" "$_cat_file" 2>/dev/null | tail -1 | cut -d= -f2-)
+  echo "${_val:-}"
+}
+cat_set_ids() {
+  _key=$(_cat_key "$1")
+  echo "IDS_${_key}=$2" >> "$_cat_file"
+}
 
 # WHY: Map WSTG ID prefix to user-facing category name
 id_to_category() {
@@ -78,24 +108,23 @@ id_to_category() {
 # Pipes in evidence are replaced with / to prevent broken markdown tables.
 # Also tracks per-category counts for the summary table.
 emit_row() {
-  local wstg="$1" name="$2" status="$3"
-  local evidence="${4//|/\/}"  # WHY: | in evidence breaks markdown table columns
-  local symbol
-  local category
+  wstg="$1"; name="$2"; status="$3"
+  evidence=$(echo "$4" | tr '|' '/')  # WHY: | in evidence breaks markdown table columns
   category=$(id_to_category "$wstg")
 
   case "$status" in
-    PASS) symbol="✅ PASS"; PASS_COUNT=$((PASS_COUNT+1)); CAT_PASS[$category]=$(( ${CAT_PASS[$category]:-0} + 1 )) ;;
-    WARN) symbol="⚠️  WARN"; WARN_COUNT=$((WARN_COUNT+1)); CAT_WARN[$category]=$(( ${CAT_WARN[$category]:-0} + 1 )) ;;
-    FAIL) symbol="❌ FAIL"; FAIL_COUNT=$((FAIL_COUNT+1)); CAT_FAIL[$category]=$(( ${CAT_FAIL[$category]:-0} + 1 )) ;;
+    PASS) symbol="✅ PASS"; PASS_COUNT=$((PASS_COUNT+1)); cat_inc PASS "$category" ;;
+    WARN) symbol="⚠️  WARN"; WARN_COUNT=$((WARN_COUNT+1)); cat_inc WARN "$category" ;;
+    FAIL) symbol="❌ FAIL"; FAIL_COUNT=$((FAIL_COUNT+1)); cat_inc FAIL "$category" ;;
     *)    symbol="$status" ;;
   esac
 
   # WHY: Track which WSTG IDs belong to each category (for the OWASP Tests column)
-  if [ -z "${CAT_IDS[$category]:-}" ]; then
-    CAT_IDS[$category]="$wstg"
-  elif ! echo "${CAT_IDS[$category]}" | grep -qF "$wstg"; then
-    CAT_IDS[$category]="${CAT_IDS[$category]}, $wstg"
+  _existing_ids=$(cat_get_ids "$category")
+  if [ -z "$_existing_ids" ]; then
+    cat_set_ids "$category" "$wstg"
+  elif ! echo "$_existing_ids" | grep -qF "$wstg"; then
+    cat_set_ids "$category" "${_existing_ids}, $wstg"
   fi
 
   printf "| %-15s | %-45s | %-10s | %s |\n" "$wstg" "$name" "$symbol" "$evidence"
@@ -186,6 +215,8 @@ discover_routes() {
   if [ "$ROUTE_DISCOVERY_DONE" = "yes" ]; then return; fi
   ROUTE_DISCOVERY_DONE="yes"
   if [ -d "$SRC_ROOT/app/api" ]; then
+    _scan_route_tmp=$(mktemp)
+    find "$SRC_ROOT/app/api" \( -name "route.ts" -o -name "route.js" -o -name "route.tsx" -o -name "route.jsx" \) 2>/dev/null | sort > "$_scan_route_tmp"
     while IFS= read -r route_file; do
       # WHY: Convert file path to API endpoint — use # as sed delimiter to avoid conflict with | in ERE alternation
       API_PATH=$(echo "$route_file" | sed "s|${SRC_ROOT}/app/api||" | sed -E 's#/route\.(ts|js|tsx|jsx)$##')
@@ -201,12 +232,13 @@ discover_routes() {
         HAS_RATE_LIMIT="yes"
       fi
 
-      METHODS=$(grep -oE 'export.*async.*function.*(GET|POST|PUT|PATCH|DELETE|OPTIONS)' "$route_file" 2>/dev/null | grep -oE '(GET|POST|PUT|PATCH|DELETE|OPTIONS)' | tr '\n' ',' | sed 's/,$//' || echo "unknown")
+      METHODS=$(grep -oE 'export.*async.*function.*(GET|POST|PUT|PATCH|DELETE|OPTIONS)' "$route_file" 2>/dev/null | grep -oE 'GET\|POST\|PUT\|PATCH\|DELETE\|OPTIONS' | tr '\n' ',' | sed 's/,$//' || echo "unknown")
       [ -z "$METHODS" ] && METHODS="unknown"
 
       ROUTE_LINES="${ROUTE_LINES}ROUTE: /api${API_PATH} | methods=${METHODS} | auth=${HAS_AUTH} | rate_limit=${HAS_RATE_LIMIT} | file=${route_file}
 "
-    done < <(find "$SRC_ROOT/app/api" -name "route.ts" -o -name "route.js" -o -name "route.tsx" -o -name "route.jsx" 2>/dev/null | sort)
+    done < "$_scan_route_tmp"
+    rm -f "$_scan_route_tmp"
   fi
 }
 
@@ -1285,7 +1317,7 @@ for CHECK_ID in $ALL_CHECKS; do
   FUNC_NAME="check_$(echo "$CHECK_ID" | tr '[:upper:]' '[:lower:]' | tr '-' '_')"
 
   # Dispatch or fail-fast
-  if declare -f "$FUNC_NAME" > /dev/null 2>&1; then
+  if type "$FUNC_NAME" > /dev/null 2>&1; then
     "$FUNC_NAME"
   else
     emit_row "$CHECK_ID" "NOT IMPLEMENTED" "FAIL" "Check function $FUNC_NAME missing — add to scan.sh"
@@ -1312,9 +1344,9 @@ for CAT in "Code injection" "SSRF" "Error handling" "Secret leakage" "Session / 
            "User data / IDOR" "AI/LLM security" "Business logic" "DDoS / API abuse" \
            "Infrastructure config" "Privacy / legal" "Hosting bypass" "Supply chain" \
            "Logging" "External APIs" "OWASP API Top 10"; do
-  p=${CAT_PASS[$CAT]:-0}
-  w=${CAT_WARN[$CAT]:-0}
-  f=${CAT_FAIL[$CAT]:-0}
+  p=$(cat_get PASS "$CAT")
+  w=$(cat_get WARN "$CAT")
+  f=$(cat_get FAIL "$CAT")
   total=$((p + w + f))
   [ "$total" -eq 0 ] && continue
 
@@ -1325,12 +1357,16 @@ for CAT in "Code injection" "SSRF" "Error handling" "Secret leakage" "Session / 
   else
     parts=""
     [ "$p" -gt 0 ] && parts="${p}✅"
-    [ "$w" -gt 0 ] && parts="${parts:+$parts }${w}⚠️"
-    [ "$f" -gt 0 ] && parts="${parts:+$parts }${f}❌"
+    if [ "$w" -gt 0 ]; then
+      if [ -n "$parts" ]; then parts="$parts ${w}⚠️"; else parts="${w}⚠️"; fi
+    fi
+    if [ "$f" -gt 0 ]; then
+      if [ -n "$parts" ]; then parts="$parts ${f}❌"; else parts="${f}❌"; fi
+    fi
     result="$parts"
   fi
 
-  ids="${CAT_IDS[$CAT]:-}"
+  ids=$(cat_get_ids "$CAT")
   printf "| %-25s | %d | %s | %s |\n" "$CAT" "$total" "$result" "$ids"
 done
 echo "| **Total** | **$((PASS_COUNT + WARN_COUNT + FAIL_COUNT))** | **${PASS_COUNT}✅ ${WARN_COUNT}⚠️ ${FAIL_COUNT}❌** | |"

@@ -1,5 +1,5 @@
-#!/bin/bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 
 # ============================================================
 # OC Security Audit — Discovery Script
@@ -293,14 +293,17 @@ echo "=== API_ROUTES ==="
 SRC_ROOT=""
 ROUTE_COUNT=0
 
+_route_tmp=$(mktemp)
+trap 'rm -f "$_route_tmp"' EXIT
+
 if [ "$FRAMEWORK" = "nextjs" ]; then
   # Next.js App Router: routes are in app/api/**/route.ts
   for SEARCH_DIR in "${PROJECT_ROOT}/src/app/api" "${PROJECT_ROOT}/app/api"; do
     if [ -d "$SEARCH_DIR" ]; then
       SRC_ROOT=$(dirname "$(dirname "$SEARCH_DIR")")
+      # WHY: Write to temp file so the while loop runs in the current shell (preserves ROUTE_COUNT)
+      find "$SEARCH_DIR" \( -name "route.ts" -o -name "route.js" -o -name "route.tsx" -o -name "route.jsx" \) 2>/dev/null | sort > "$_route_tmp"
       while IFS= read -r route_file; do
-        # Extract the API path from the file path
-        # WHY: Convert file path to API endpoint path for route mapping
         # WHY: Convert file path to API endpoint path — use # as sed delimiter to avoid conflict with | in ERE alternation
         API_PATH=$(echo "$route_file" | sed "s|${SEARCH_DIR}||" | sed -E 's#/route\.(ts|js|tsx|jsx)$##')
         [ -z "$API_PATH" ] && API_PATH="/"
@@ -320,16 +323,13 @@ if [ "$FRAMEWORK" = "nextjs" ]; then
         fi
 
         # CHECK: What HTTP methods does this route export?
-        METHODS=""
         # WHY: Extract exported HTTP method names to map the API surface
-        grep -oE 'export.*async.*function.*(GET|POST|PUT|PATCH|DELETE|OPTIONS)' "$route_file" 2>/dev/null | grep -oE '(GET|POST|PUT|PATCH|DELETE|OPTIONS)' | tr '\n' ',' | sed 's/,$//' > /tmp/oc_methods 2>/dev/null || true
-        METHODS=$(cat /tmp/oc_methods 2>/dev/null || echo "unknown")
+        METHODS=$(grep -oE 'export.*async.*function.*(GET|POST|PUT|PATCH|DELETE|OPTIONS)' "$route_file" 2>/dev/null | grep -oE 'GET\|POST\|PUT\|PATCH\|DELETE\|OPTIONS' | tr '\n' ',' | sed 's/,$//' || true)
         [ -z "$METHODS" ] && METHODS="unknown"
 
         echo "ROUTE: /api${API_PATH} | methods=${METHODS} | auth=${HAS_AUTH} | rate_limit=${HAS_RATE_LIMIT} | file=${route_file}"
         ROUTE_COUNT=$((ROUTE_COUNT + 1))
-      # WHY: Find all Next.js App Router route handler files
-      done < <(find "$SEARCH_DIR" -name "route.ts" -o -name "route.js" -o -name "route.tsx" -o -name "route.jsx" 2>/dev/null | sort)
+      done < "$_route_tmp"
       break
     fi
   done
@@ -339,12 +339,12 @@ elif [ "$FRAMEWORK" = "express" ]; then
   for SEARCH_DIR in "${PROJECT_ROOT}/src/routes" "${PROJECT_ROOT}/routes" "${PROJECT_ROOT}/src/api"; do
     if [ -d "$SEARCH_DIR" ]; then
       SRC_ROOT="${PROJECT_ROOT}/src"
-      # WHY: Find all Express route files for endpoint analysis
-      # NOTE: Using process substitution (not pipe) to keep ROUTE_COUNT in current shell
+      # WHY: Write to temp file so the while loop runs in the current shell (preserves ROUTE_COUNT)
+      find "$SEARCH_DIR" \( -name "*.ts" -o -name "*.js" \) 2>/dev/null | sort > "$_route_tmp"
       while IFS= read -r route_file; do
         echo "ROUTE: ${route_file} | (express — analyze manually)"
         ROUTE_COUNT=$((ROUTE_COUNT + 1))
-      done < <(find "$SEARCH_DIR" -name "*.ts" -o -name "*.js" 2>/dev/null | sort)
+      done < "$_route_tmp"
       break
     fi
   done
@@ -412,5 +412,5 @@ fi
 echo ""
 echo "=== END_DISCOVERY ==="
 
-# Clean up temp file
+# Clean up temp files
 rm -f /tmp/oc_methods

@@ -1,8 +1,8 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # TEST HARNESS for oc-security-audit v2.2
 # Run this from the v6 project root to validate discover.sh + scan.sh output.
 # REMOVE BEFORE PRODUCTION — this is a development-only diagnostic tool.
-set -uo pipefail
+set -u
 
 SKILL_DIR="$(cd "$(dirname "$(realpath "$0" 2>/dev/null || echo "$0")")/.." && pwd)"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
@@ -37,7 +37,7 @@ echo ""
 
 # ---- Phase 1: discover.sh ----
 echo "▶ Phase 1: Running discover.sh..."
-DISCOVERY=$(bash "$SKILL_DIR/scripts/discover.sh" 2>&1)
+DISCOVERY=$(sh "$SKILL_DIR/scripts/discover.sh" 2>&1)
 DISCOVER_EXIT=$?
 
 echo ""
@@ -89,7 +89,7 @@ SCAN_OUTPUT=$(OC_PROFILE="${PROFILE:-unsupported}" \
   OC_ORM="${ORM:-unknown}" \
   OC_FILE_UPLOADS="${FILE_UPLOADS:-no}" \
   OC_AI_SDK="${AI_SDK:-none}" \
-  bash "$SKILL_DIR/scripts/scan.sh" 2>&1)
+  sh "$SKILL_DIR/scripts/scan.sh" 2>&1)
 SCAN_EXIT=$?
 
 echo ""

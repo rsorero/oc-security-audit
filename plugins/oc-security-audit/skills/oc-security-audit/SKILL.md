@@ -1,7 +1,7 @@
 ---
 name: oc-security-audit
 description: "Pre-launch security audit for web apps. Runs OWASP checks via shell scripts, then AI analyzes findings. Covers rate limiting, hosting bypass, data exposure, headers, session security, AI risks. Complements /security-review."
-allowed-tools: Read, Grep, Glob, Bash(bash *discover.sh), Bash(bash *scan.sh)
+allowed-tools: Read, Grep, Glob, Bash(sh *discover.sh), Bash(sh *scan.sh)
 ---
 
 You are running the OC Security Audit — a pre-launch security check for web applications.
